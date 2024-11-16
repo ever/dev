@@ -1,0 +1,212 @@
+Certainly! Creating a Revit add-in that places conduits and connects them with fittings, while also managing the connections using the Connection Manager, involves several steps. Below is a detailed example of how you can achieve this in C#.
+
+### Prerequisites:
+1. **Revit SDK**: Ensure you have the Revit SDK installed.
+2. **Visual Studio**: Set up with Revit Add-In templates (you can install these via NuGet or by downloading them from Autodesk's website).
+
+### Steps to Create the Add-In:
+
+1. **Create a New Project**:
+   - Open Visual Studio.
+   - Create a new project using the "Class Library" template.
+   - Name your project (e.g., `ConduitAddIn`).
+
+2. **Add References**:
+   - Add references to `RevitAPI.dll`, `RevitServices.dll`, and other necessary Revit API assemblies.
+
+3. **Modify the Class**:
+   - Replace the contents of `Class1.cs` with the following code:
+
+```csharp
+using System;
+using Autodesk.Revit.Attributes;
+using Autodesk.Revit.DB;
+using Autodesk.Revit.UI;
+using Autodesk.Revit.ApplicationServices;
+using System.Collections.Generic;
+
+namespace ConduitAddIn
+{
+    [Transaction(TransactionMode.Manual)]
+    public class CreateConduitsCommand : IExternalCommand
+    {
+        public Result Execute(
+          ExternalCommandData commandData,
+          ref string message,
+          ElementSet elements)
+        {
+            UIApplication uiapp = commandData.Application;
+            UIDocument uidoc = uiapp.ActiveUIDocument;
+            Document doc = uidoc.Document;
+
+            try
+            {
+                // Define the start and end points for conduits
+                XYZ startPoint1 = new XYZ(0, 0, 3);
+                XYZ endPoint1 = new XYZ(5, 0, 3);
+
+                XYZ startPoint2 = new XYZ(5, 0, 3);
+                XYZ endPoint2 = new XYZ(10, 0, 3);
+
+                XYZ startPoint3 = new XYZ(10, 0, 3);
+                XYZ endPoint3 = new XYZ(15, 0, 3);
+
+                // Get the conduit type and fitting type
+                ConduitType conduitType = GetConduitTypeByName(doc, "Default Conduit");
+                FamilySymbol fittingType = GetFittingTypeByName(doc, "Elbow");
+
+                // Start a transaction
+                using (Transaction trans = new Transaction(doc, "Create Conduits and Fittings"))
+                {
+                    trans.Start();
+
+                    // Create conduits
+                    Conduit conduit1 = Conduit.Create(doc, conduitType.Id, startPoint1, endPoint1);
+                    Conduit conduit2 = Conduit.Create(doc, conduitType.Id, startPoint2, endPoint2);
+                    Conduit conduit3 = Conduit.Create(doc, conduitType.Id, startPoint3, endPoint3);
+
+                    // Create fittings
+                    FamilyInstance fitting1 = doc.Create.NewFamilyInstance(endPoint1, fittingType, null, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+                    FamilyInstance fitting2 = doc.Create.NewFamilyInstance(endPoint2, fittingType, null, Autodesk.Revit.DB.Structure.StructuralType.NonStructural);
+
+                    // Connect conduits with fittings
+                    ConnectorSet conduit1Connectors = GetConnectorSet(conduit1);
+                    ConnectorSet conduit2Connectors = GetConnectorSet(conduit2);
+                    ConnectorSet conduit3Connectors = GetConnectorSet(conduit3);
+                    ConnectorSet fitting1Connectors = GetConnectorSet(fitting1);
+                    ConnectorSet fitting2Connectors = GetConnectorSet(fitting2);
+
+                    // Connect conduit1 to fitting1
+                    foreach (Connector c1 in conduit1Connectors)
+                    {
+                        if (c1.IsConnected) continue;
+                        foreach (Connector f1 in fitting1Connectors)
+                        {
+                            if (!f1.IsConnected && ConnectorManager.AreConnectable(c1, f1))
+                            {
+                                ConnectorManager.ConnectElbow(c1, f1);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Connect conduit2 to fitting1 and fitting2
+                    foreach (Connector c2 in conduit2Connectors)
+                    {
+                        if (c2.IsConnected) continue;
+                        foreach (Connector f1 in fitting1Connectors)
+                        {
+                            if (!f1.IsConnected && ConnectorManager.AreConnectable(c2, f1))
+                            {
+                                ConnectorManager.ConnectElbow(c2, f1);
+                                break;
+                            }
+                        }
+                    }
+
+                    // Connect conduit3 to fitting2
+                    foreach (Connector c3 in conduit3Connectors)
+                    {
+                        if (c3.IsConnected) continue;
+                        foreach (Connector f2 in fitting2Connectors)
+                        {
+                            if (!f2.IsConnected && ConnectorManager.AreConnectable(c3, f2))
+                            {
+                                ConnectorManager.ConnectElbow(c3, f2);
+                                break;
+                            }
+                        }
+                    }
+
+                    trans.Commit();
+                }
+
+                TaskDialog.Show("Success", "Conduits and fittings created successfully!");
+                return Result.Succeeded;
+            }
+            catch (Exception ex)
+            {
+                message = ex.Message;
+                TaskDialog.Show("Error", $"Failed to create conduits and fittings: {ex.Message}");
+                return Result.Failed;
+            }
+        }
+
+        private ConduitType GetConduitTypeByName(Document doc, string conduitTypeName)
+        {
+            FilteredElementCollector collector = new FilteredElementCollector(doc).OfClass(typeof(ConduitType)).Where(ct => ct.Name == conduitTypeName);
+            return collector.Cast<ConduitType>().FirstOrDefault();
+        }
+
+        private FamilySymbol GetFittingTypeByName(Document doc, string fittingTypeName)
+        {
+            FilteredElementCollector collector = new FilteredElementCollector(doc).OfClass(typeof(FamilySymbol)).Where(fs => fs.Family.Name == fittingTypeName && fs.Category.Name == "Conduits");
+            return collector.Cast<FamilySymbol>().FirstOrDefault();
+        }
+
+        private ConnectorSet GetConnectorSet(Element element)
+        {
+            MEPCurve mepCurve = element as MEPCurve;
+            if (mepCurve != null)
+            {
+                MEPModel model = mepCurve.MEPModel;
+                return model.ConnectorManager.Connectors;
+            }
+            FamilyInstance familyInstance = element as FamilyInstance;
+            if (familyInstance != null && familyInstance.MEPModel != null)
+            {
+                return familyInstance.MEPModel.ConnectorManager.Connectors;
+            }
+            return new ConnectorSet();
+        }
+    }
+}
+```
+
+### Explanation:
+
+1. **Transaction Attribute**: The `[Transaction(TransactionMode.Manual)]` attribute specifies that the command will manually handle transactions.
+
+2. **Execute Method**: This method is where the main logic of your add-in resides.
+   - **XYZ Points**: Define the start and end points for conduits.
+   - **ConduitType and FamilySymbol**: Retrieve the conduit type and fitting type from the document.
+   - **Transaction**: Start a transaction, create conduits and fittings, connect them using connectors, and then commit the transaction.
+
+3. **Helper Methods**:
+   - `GetConduitTypeByName`: Finds a conduit type by its name in the document.
+   - `GetFittingTypeByName`: Finds a fitting type by its name in the document.
+   - `GetConnectorSet`: Retrieves the set of connectors from an element (either a conduit or a fitting).
+
+4. **Connecting Conduits and Fittings**:
+   - The code iterates through the connectors of each conduit and fitting to find compatible connectors and connect them using the `ConnectorManager.ConnectElbow` method.
+
+### Deployment:
+
+1. **Create an Add-In Manifest**:
+   - Create a file named `ConduitAddIn.addin` with the following content:
+
+```xml
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<RevitAddIns>
+  <AddIn Type="Command"
+         Name="Create Conduits and Fittings"
+         Text="Create Conduits and Fittings"
+         Description="Creates conduits and connects them with fittings in Revit."
+         VisibilityMode="AlwaysVisible"
+         ShowImageAsButton="true">
+    <FullClassName>ConduitAddIn.CreateConduitsCommand</FullClassName>
+    <Assembly>ConduitAddIn.dll</Assembly>
+  </AddIn>
+</RevitAddIns>
+```
+
+2. **Build the Project**:
+   - Build your project in Visual Studio to generate the `ConduitAddIn.dll`.
+
+3. **Place the Add-In Manifest and DLL**:
+   - Place both the `.addin` file and the generated `.dll` file into the Revit Add-Ins folder (e.g., `C:\ProgramData\Autodesk\ApplicationPlugins`).
+
+4. **Load the Add-In in Revit**:
+   - Open Revit, go to the "Add-Ins" tab, and you should see your "Create Conduits and Fittings" button.
+
+This code will create a simple network of conduits connected by fittings using the Connection Manager in Revit. You can expand on this by adding more complex logic or additional features as needed.
